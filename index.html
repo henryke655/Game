@@ -3,68 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎮 Jogo da Velha Online</title>
+    <title>🎮 Jogo da Velha</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
 </head>
 <body>
-    <!-- Modal de Login -->
-    <div class="modal" id="login-modal">
+    <!-- Modal de Seleção de Modo -->
+    <div class="modal" id="mode-modal">
         <div class="modal-content">
             <div class="logo">🎮</div>
             <h1>Jogo da Velha</h1>
-            <p>Multiplayer Online</p>
+            <p>Escolha o modo de jogo</p>
+            
+            <div class="mode-buttons">
+                <button class="mode-btn" id="solo-btn">
+                    <span class="mode-icon">🤖</span>
+                    <span class="mode-title">Solo vs IA</span>
+                    <span class="mode-desc">Desafie o computador</span>
+                </button>
+                
+                <button class="mode-btn" id="local-btn">
+                    <span class="mode-icon">👥</span>
+                    <span class="mode-title">Local</span>
+                    <span class="mode-desc">2 jogadores, mesmo dispositivo</span>
+                </button>
+                
+                <button class="mode-btn" id="online-btn">
+                    <span class="mode-icon">🌐</span>
+                    <span class="mode-title">Online</span>
+                    <span class="mode-desc">Multiplayer via internet</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Login Online -->
+    <div class="modal" id="login-modal" style="display:none;">
+        <div class="modal-content">
+            <div class="logo">🌐</div>
+            <h1>Modo Online</h1>
+            <p>Conecte-se para jogar</p>
             <input 
                 type="text" 
                 id="username-input" 
                 placeholder="Seu nome de jogador" 
                 maxlength="20" 
                 autocomplete="off"
-                autofocus
             >
-            <button class="btn btn-primary" id="start-btn">
+            <button class="btn btn-primary" id="start-online-btn">
                 🚀 Entrar no Jogo
             </button>
-            <div class="features">
-                <span>⚡ Tempo Real</span>
-                <span>🏆 Ranking Global</span>
-                <span>📱 Multiplataforma</span>
-            </div>
+            <button class="btn btn-secondary" id="back-btn">
+                ← Voltar
+            </button>
         </div>
     </div>
 
     <!-- Área do Jogo -->
     <div class="container" id="game-area" style="display:none;">
         <header>
-            <h1>🎮 Jogo da Velha</h1>
+            <h1 id="game-title">🎮 Jogo da Velha</h1>
             <div class="user-info">
-                <span id="welcome-user">Jogador</span>
-                <button class="btn-icon" id="logout-btn" title="Sair">🚪</button>
+                <span id="mode-display">Modo: Solo</span>
+                <button class="btn-icon" id="menu-btn" title="Menu">☰</button>
             </div>
         </header>
 
-        <!-- Stats do Jogador -->
-        <div class="player-stats" id="player-stats">
-            <div class="stat-card">
-                <span class="stat-value" id="my-rank">-</span>
-                <span class="stat-label">Rank</span>
-            </div>
-            <div class="stat-card highlight">
-                <span class="stat-value" id="my-elo">1000</span>
-                <span class="stat-label">ELO</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-value" id="my-wins">0</span>
-                <span class="stat-label">Vitórias</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-value" id="my-streak">0</span>
-                <span class="stat-label">Sequência</span>
-            </div>
-        </div>
-
         <!-- Status do Jogo -->
-        <div class="status" id="status">Conectando...</div>
+        <div class="status-bar">
+            <div class="status" id="status">Vez do <span class="player-x">X</span></div>
+        </div>
 
         <!-- Tabuleiro -->
         <div class="board" id="board">
@@ -79,50 +86,49 @@
             <div class="cell" data-index="8"></div>
         </div>
 
+        <!-- Placar -->
+        <div class="scores">
+            <div class="score-card">
+                <span class="player-x" id="label-x">X</span>
+                <span class="score-value" id="score-x">0</span>
+            </div>
+            <div class="score-card">
+                <span class="draw">EMPATE</span>
+                <span class="score-value" id="score-draw">0</span>
+            </div>
+            <div class="score-card">
+                <span class="player-o" id="label-o">O</span>
+                <span class="score-value" id="score-o">0</span>
+            </div>
+        </div>
+
         <!-- Botões -->
-        <div class="buttons">
-            <button class="btn btn-play" id="join-btn">
-                🎮 Procurar Oponente
-            </button>
-            <button class="btn btn-secondary" id="rematch-btn" style="display:none;">
-                🔄 Revanche
-            </button>
-            <button class="btn btn-secondary" id="leave-btn" style="display:none;">
-                ❌ Sair da Partida
-            </button>
+        <div class="actions">
+            <button class="btn btn-primary" id="reset-btn">🔄 Nova Partida</button>
+            <button class="btn btn-secondary" id="back-menu-btn">🏠 Menu</button>
         </div>
 
-        <!-- Conexão -->
-        <div class="connection-status" id="connection-status">
-            <span class="dot offline"></span>
-            <span>Desconectado</span>
-        </div>
-    </div>
-
-    <!-- Botão Ranking -->
-    <button class="btn-rank" id="rank-toggle" style="display:none;">
-        🏆 Ranking
-    </button>
-
-    <!-- Painel de Ranking -->
-    <div class="ranking-panel" id="ranking-panel">
-        <div class="ranking-header">
-            <h2>🏆 Ranking Global</h2>
-            <button class="btn-close" id="close-ranking">✕</button>
+        <!-- Stats Online -->
+        <div class="online-stats" id="online-stats" style="display:none;">
+            <div class="stat-card">
+                <span class="stat-value" id="my-elo">1000</span>
+                <span class="stat-label">ELO</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="my-wins">0</span>
+                <span class="stat-label">Vitórias</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="my-streak">0</span>
+                <span class="stat-label">Sequência</span>
+            </div>
         </div>
 
-        <div class="ranking-tabs">
-            <button class="tab active" data-sort="elo_rating">⭐ ELO</button>
-            <button class="tab" data-sort="wins">🎯 Vitórias</button>
-            <button class="tab" data-sort="win_rate">📊 Aproveitamento</button>
-            <button class="tab" data-sort="streak">🔥 Sequência</button>
+        <!-- Top 10 Online -->
+        <div class="leaderboard" id="leaderboard" style="display:none;">
+            <h3>🏆 Top 10 Global</h3>
+            <div class="leaderboard-list" id="leaderboard-list"></div>
         </div>
-
-        <div class="ranking-list" id="ranking-list">
-            <p class="empty-state">Nenhum jogador ainda</p>
-        </div>
-
-        <div class="ranking-stats" id="ranking-stats"></div>
     </div>
 
     <!-- Toast Container -->

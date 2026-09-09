@@ -1,27 +1,26 @@
-"""🚀 Servidor WebSocket - Jogo da Velha Online"""
-
+#!/usr/bin/env python3
+"""
+Servidor WebSocket para Jogo da Velha Online
+"""
 import asyncio
 import websocket
 import json
+import sqlite3
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 import uuid
-import time
 
-from database import (
-    init_db, get_or_create_player, record_match,
-    get_leaderboard, get_player_stats, get_system_stats
-)
+# ============================================================
+# MODELOS DE DADOS
+# ============================================================
 
-
-# ─── Modelos de Dados ─────────────────────────────────────────
 @dataclass
 class Player:
     ws: websocket.WebSocketServerProtocol
     symbol: str
     player_id: str
-    username: str = ""
-
+    username: str
 
 @dataclass
 class Game:
@@ -30,21 +29,118 @@ class Game:
     board: list[str] = field(default_factory=lambda: [''] * 9)
     current_turn: str = 'X'
     winner: Optional[str] = None
-    start_time: float = 0.0
-
-    def is_full(self) -> bool:
-        return len(self.players) >= 2
-
+    
     def reset_board(self):
         self.board = [''] * 9
         self.current_turn = 'X'
         self.winner = None
-        self.start_time = time.time()
 
+# ============================================================
+# BANCO DE DADOS
+# ============================================================
 
-# ─── Estado Global ────────────────────────────────────────────
+def init_db():
+    """Inicializa o banco de dados SQLite."""
+    conn = sqlite3.connect('ranking.db')
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            elo INTEGER DEFAULT 1000,
+            wins INTEGER DEFAULT 0,
+            losses INTEGER DEFAULT 0,
+            draws INTEGER DEFAULT 0,
+            streak INTEGER DEFAULT 0,
+            best_streak INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
+    conn.close()
+    print("✅ Banco de dados inicializado")
+
+def get_player_stats(username: str) -> dict:
+    """Retorna estatísticas do jogador."""
+    conn = sqlite3.connect('ranking.db')
+    conn.row_factory = sqlite3.Row
+    
+    row = conn.execute(
+        "SELECT * FROM players WHERE username = ?", 
+        (username,)
+    ).fetchone()
+    
+    if row:
+        stats = dict(row)
+    else:
+        stats = {
+            'elo': 1000,
+            'wins': 0,
+            'losses': 0,
+            'draws': 0,
+            'streak': 0,
+            'best_streak': 0
+        }
+    
+    conn.close()
+    return stats
+
+def update_player_stats(username: str, result: str):
+    """Atualiza estatísticas após jogo."""
+    conn = sqlite3.connect('ranking.db')
+    
+    conn.execute(
+        "INSERT OR IGNORE INTO players (username) VALUES (?)",
+        (username,)
+    )
+    
+    if result == 'win':
+        conn.execute("""
+            UPDATE players SET 
+                wins = wins + 1,
+                elo = elo + 16,
+                streak = streak + 1,
+                best_streak = MAX(best_streak, streak + 1)
+            WHERE username = ?
+        """, (username,))
+    elif result == 'loss':
+        conn.execute("""
+            UPDATE players SET 
+                losses = losses + 1,
+                elo = MAX(0, elo - 16),
+                streak = 0
+            WHERE username = ?
+        """, (username,))
+    else:
+        conn.execute("""
+            UPDATE players SET 
+                draws = draws + 1,
+                streak = 0
+            WHERE username = ?
+        """, (username,))
+    
+    conn.commit()
+    conn.close()
+
+def get_leaderboard(limit: int = 10) -> list:
+    """Retorna top jogadores."""
+    conn = sqlite3.connect('ranking.db')
+    conn.row_factory = sqlite3.Row
+    
+    rows = conn.execute(
+        "SELECT username, elo, wins, losses, draws FROM players ORDER BY elo DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    
+    conn.close()
+    return [dict(row) for row in rows]
+
+# ============================================================
+# CONTROLE DO JOGO
+# ============================================================
+
 games: dict[str, Game] = {}
 waiting_player: Optional[Player] = None
+connected_players: dict[str, Player] = {}
 
 WINNING_COMBOS = [
     [0, 1, 2], [3, 4, 5], [6, 7, 8],
@@ -52,19 +148,17 @@ WINNING_COMBOS = [
     [0, 4, 8], [2, 4, 6]
 ]
 
-
-# ─── Utilitários ──────────────────────────────────────────────
 async def send_json(ws, data):
     """Envia JSON via WebSocket."""
-    if ws.open:
+    try:
         await ws.send(json.dumps(data))
-
+    except websocket.exceptions.ConnectionClosed:
+        pass
 
 async def broadcast_to_game(game: Game, message: dict):
     """Envia mensagem para todos os jogadores do jogo."""
     for player in game.players:
         await send_json(player.ws, message)
-
 
 def check_winner(board) -> Optional[str]:
     """Verifica se há vencedor."""
@@ -76,21 +170,29 @@ def check_winner(board) -> Optional[str]:
         return 'draw'
     return None
 
+def get_game_state(game: Game, player: Player) -> dict:
+    """Retorna estado do jogo."""
+    return {
+        'type': 'game_state',
+        'game_id': game.game_id,
+        'board': game.board,
+        'current_turn': game.current_turn,
+        'winner': game.winner,
+        'status': 'playing' if game.winner is None else 'finished'
+    }
 
-# ─── Lógica do Jogo ───────────────────────────────────────────
 async def create_or_join_game(player: Player):
-    """Cria um novo jogo ou adiciona à fila."""
+    """Cria novo jogo ou junta jogador existente."""
     global waiting_player
-
-    if waiting_player and waiting_player.ws.open and waiting_player.username:
+    
+    if waiting_player and waiting_player.ws.open:
         game_id = str(uuid.uuid4())[:8]
         game = Game(
             game_id=game_id,
-            players=[waiting_player, player],
-            start_time=time.time()
+            players=[waiting_player, player]
         )
         games[game_id] = game
-
+        
         for p in game.players:
             await send_json(p.ws, {
                 'type': 'game_created',
@@ -99,9 +201,9 @@ async def create_or_join_game(player: Player):
                 'message': f'🎮 Jogo #{game_id} criado! Você é {p.symbol}'
             })
             await send_json(p.ws, get_game_state(game, p))
-
+        
         waiting_player = None
-        print(f"✅ Jogo {game_id}: {game.players[0].username} vs {game.players[1].username}")
+        print(f"✅ Jogo {game_id} criado")
     else:
         waiting_player = player
         await send_json(player.ws, {
@@ -109,271 +211,130 @@ async def create_or_join_game(player: Player):
             'message': '⏳ Procurando oponente...'
         })
 
-
-async def handle_move(game: Game, player: Player, index: int):
-    """Processa uma jogada."""
+async def handle_move(game: Game, player: Player, position: int):
+    """Processa jogada do jogador."""
     if game.winner:
         return
-    if player.symbol != game.current_turn:
-        return
-    if index < 0 or index > 8 or game.board[index]:
-        return
-
-    game.board[index] = player.symbol
-    game.current_turn = 'O' if game.current_turn == 'X' else 'X'
-
-    result = check_winner(game.board)
-
-    if result:
-        game.winner = result
-        duration = int(time.time() - game.start_time)
-
-        player_x = game.players[0].username
-        player_o = game.players[1].username
-        winner = None if result == 'draw' else result
-
-        record_match(player_x, player_o, winner, duration)
-
-        stats_x = get_player_stats(player_x)
-        stats_o = get_player_stats(player_o)
-
-        if result == 'draw':
-            message = '🤝 Empate!'
-        else:
-            winner_name = game.players[0].username if result == 'X' else game.players[1].username
-            message = f'🎉 {winner_name} venceu!'
-
-        await broadcast_to_game(game, {
-            'type': 'game_over',
-            'winner': result,
-            'message': message,
-            'board': game.board,
-            'duration': duration,
-            'player_stats': {
-                'X': {
-                    'username': player_x,
-                    'rank': stats_x['rank'] if stats_x else None,
-                    'elo_rating': stats_x['elo_rating'] if stats_x else 1000,
-                    'wins': stats_x['wins'] if stats_x else 0,
-                    'win_streak': stats_x['win_streak'] if stats_x else 0
-                },
-                'O': {
-                    'username': player_o,
-                    'rank': stats_o['rank'] if stats_o else None,
-                    'elo_rating': stats_o['elo_rating'] if stats_o else 1000,
-                    'wins': stats_o['wins'] if stats_o else 0,
-                    'win_streak': stats_o['win_streak'] if stats_o else 0
-                }
-            }
+    
+    if game.current_turn != player.symbol:
+        await send_json(player.ws, {
+            'type': 'error',
+            'message': 'Não é sua vez!'
         })
-    else:
+        return
+    
+    if position < 0 or position > 8 or game.board[position] != '':
+        await send_json(player.ws, {
+            'type': 'error',
+            'message': 'Jogada inválida!'
+        })
+        return
+    
+    game.board[position] = player.symbol
+    game.winner = check_winner(game.board)
+    
+    if game.winner:
         for p in game.players:
-            await send_json(p.ws, get_game_state(game, p))
-
-
-def get_game_state(game: Game, player: Player) -> dict:
-    """Retorna o estado atual do jogo para um jogador."""
-    opponent = next((p for p in game.players if p != player), None)
-    return {
-        'type': 'game_state',
-        'game_id': game.game_id,
-        'board': game.board,
-        'current_turn': game.current_turn,
-        'my_symbol': player.symbol,
-        'opponent': opponent.username if opponent else None,
-        'winner': game.winner
-    }
-
-
-# ─── Handler WebSocket ────────────────────────────────────────
-async def handler(ws):
-    """Handler principal do WebSocket."""
-    global waiting_player
-
-    player_id = str(uuid.uuid4())[:8]
-    player = Player(ws=ws, symbol='X', player_id=player_id)
-
-    print(f"🔌 {player_id} conectou")
-
-    try:
-        await send_json(ws, {
-            'type': 'connected',
-            'player_id': player_id,
-            'message': '✅ Conectado ao servidor!'
+            if game.winner == 'draw':
+                update_player_stats(p.username, 'draw')
+            elif p.symbol == game.winner:
+                update_player_stats(p.username, 'win')
+            else:
+                update_player_stats(p.username, 'loss')
+    
+    game.current_turn = 'O' if game.current_turn == 'X' else 'X'
+    
+    for p in game.players:
+        state = get_game_state(game, p)
+        await send_json(p.ws, state)
+    
+    leaderboard = get_leaderboard()
+    for p in game.players:
+        await send_json(p.ws, {
+            'type': 'leaderboard',
+            'players': leaderboard
         })
 
-        async for message in ws:
-            try:
-                data = json.loads(message)
-                msg_type = data.get('type')
-
-                if msg_type == 'set_username':
-                    username = data.get('username', f'player_{player_id[:4]}')
-                    player.username = username
-                    profile = get_or_create_player(username)
-                    await send_json(ws, {
-                        'type': 'profile_loaded',
-                        'profile': profile
+async def handle_disconnect(player: Player):
+    """Lida com desconexão do jogador."""
+    global waiting_player
+    
+    if waiting_player and waiting_player.player_id == player.player_id:
+        waiting_player = None
+    
+    for game_id, game in list(games.items()):
+        if player in game.players:
+            for p in game.players:
+                if p != player:
+                    await send_json(p.ws, {
+                        'type': 'player_disconnected',
+                        'message': 'Oponente desconectou'
                     })
+            del games[game_id]
+            break
 
-                elif msg_type == 'join_queue':
-                    if player.username:
-                        await create_or_join_game(player)
+# ============================================================
+# HANDLER PRINCIPAL
+# ============================================================
 
-                elif msg_type == 'move':
-                    game_id = data.get('game_id')
-                    index = int(data.get('index', -1))
-                    if game_id in games:
-                        await handle_move(games[game_id], player, index)
-
-                elif msg_type == 'get_leaderboard':
-                    sort_by = data.get('sort_by', 'elo_rating')
-                    limit = data.get('limit', 50)
-                    leaderboard = get_leaderboard(limit, sort_by)
-                    await send_json(ws, {
-                        'type': 'leaderboard',
-                        'data': leaderboard,
-                        'sort_by': sort_by
-                    })
-
-                elif msg_type == 'system_stats':
-                    stats = get_system_stats()
-                    await send_json(ws, {
-                        'type': 'system_stats',
-                        'data': stats
-                    })
-
-                elif msg_type == 'rematch':
-                    game_id = data.get('game_id')
-                    if game_id in games:
-                        game = games[game_id]
-                        game.reset_board()
-                        for p in game.players:
-                            await send_json(p.ws, {'type': 'new_round', 'message': '🔄 Nova rodada!'})
-                            await send_json(p.ws, get_game_state(game, p))
-
-                elif msg_type == 'leave_game':
-                    game_id = data.get('game_id')
-                    if game_id in games:
-                        game = games[game_id]
-                        if player in game.players:
-                            opponent = next((p for p in game.players if p != player), None)
-                            if opponent and opponent.ws.open:
-                                await send_json(opponent.ws, {
-                                    'type': 'opponent_disconnected',
-                                    'message': '❌ Oponente saiu da partida'
-                                })
-                            del games[game_id]
-
-                elif msg_type == 'get_stats':
-                    target = data.get('username', player.username)
-                    stats = get_player_stats(target)
-                    await send_json(ws, {
-                        'type': 'player_stats',
-                        'data': stats
-                    })
-
-            except json.JSONDecodeError:
-                pass
-            except Exception as e:
-                print(f"Erro ao processar mensagem: {e}")
-
-    except websocket.ConnectionClosed:
-        print(f"🔌 {player_id} ({player.username}) desconectou")
+async def handler(websocket):
+    """Handler principal de conexões WebSocket."""
+    player = None
+    
+    try:
+        async for message in websocket:
+            data = json.loads(message)
+            
+            if data['type'] == 'register':
+                player_id = str(uuid.uuid4())[:8]
+                player = Player(
+                    ws=websocket,
+                    symbol='X',
+                    player_id=player_id,
+                    username=data['username']
+                )
+                connected_players[player_id] = player
+                
+                stats = get_player_stats(data['username'])
+                
+                await send_json(websocket, {
+                    'type': 'registered',
+                    'username': data['username'],
+                    'player_id': player_id,
+                    'stats': stats
+                })
+                
+                print(f"👤 {data['username']} conectado")
+            
+            elif data['type'] == 'find_game' and player:
+                await create_or_join_game(player)
+            
+            elif data['type'] == 'make_move' and player:
+                game = games.get(data['game_id'])
+                if game:
+                    await handle_move(game, player, data['position'])
+    
+    except websocket.exceptions.ConnectionClosed:
+        pass
     finally:
-        # Limpar da fila de espera
-        if waiting_player and waiting_player.player_id == player.player_id:
-            waiting_player = None
+        if player:
+            await handle_disconnect(player)
+            connected_players.pop(player.player_id, None)
+            print(f"👋 {player.username} desconectado")
 
-        # Limpar de jogos ativos
-        for game_id, game in list(games.items()):
-            if player in game.players:
-                opponent = next((p for p in game.players if p != player), None)
-                if opponent and opponent.ws.open:
-                    await send_json(opponent.ws, {
-                        'type': 'opponent_disconnected',
-                        'message': '❌ Oponente desconectou'
-                    })
-                del games[game_id]
-                print(f"🗑️ Jogo {game_id} removido")
+# ============================================================
+# SERVIDOR
+# ============================================================
 
-
-# ─── Servidor HTTP para arquivos estáticos ────────────────────
-class StaticFileHandler:
-    """Serve arquivos estáticos do frontend."""
-
-    def __init__(self, static_dir):
-        import os
-        self.static_dir = os.path.abspath(static_dir)
-        self.mime_types = {
-            '.html': 'text/html',
-            '.css': 'text/css',
-            '.js': 'application/javascript',
-            '.json': 'application/json',
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.svg': 'image/svg+xml',
-            '.ico': 'image/x-icon'
-        }
-
-    async def __call__(self, path, headers):
-        import os
-
-        if path == '/':
-            path = '/index.html'
-
-        file_path = os.path.join(self.static_dir, path.lstrip('/'))
-
-        if not os.path.exists(file_path) or not os.path.isfile(file_path):
-            # Fallback para index.html (SPA)
-            file_path = os.path.join(self.static_dir, 'index.html')
-
-        try:
-            with open(file_path, 'rb') as f:
-                content = f.read()
-
-            ext = os.path.splitext(file_path)[1]
-            content_type = self.mime_types.get(ext, 'application/octet-stream')
-
-            return [200, {'Content-Type': content_type}, content]
-        except Exception:
-            return [404, {'Content-Type': 'text/plain'}, b'Not Found']
-
-
-# ─── Main ─────────────────────────────────────────────────────
 async def main():
-    """Inicia o servidor."""
-    import os
-
-    # Inicializar banco de dados
+    """Inicia o servidor WebSocket."""
     init_db()
-
-    # Configurar handler para arquivos estáticos
-    frontend_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend')
-    static_handler = StaticFileHandler(frontend_dir)
-
-    # Criar servidor WebSocket com suporte a HTTP
-    async def process_request(path, headers):
-        """Processa requisições HTTP (para servir arquivos estáticos)."""
-        if path.startswith('/ws'):
-            return None  # Deixar o WebSocket lidar
-
-        # Servir arquivos estáticos
-        return await static_handler(path, headers)
-
-    print("🚀 Servidor rodando em http://localhost:8765")
-    print("📱 Abra no navegador para jogar!")
-
-    async with websocket.serve(
-        handler,
-        "0.0.0.0",
-        8765,
-        process_request=process_request,
-        ping_interval=20,
-        ping_timeout=10
-    ):
-        await asyncio.Future()  # Rodar para sempre
-
+    
+    print("🚀 Servidor WebSocket em ws://localhost:8765")
+    print("📊 Acesse http://localhost:8765 para jogar")
+    
+    async with websocket.serve(handler, "0.0.0.0", 8765):
+        await asyncio.Future()
 
 if __name__ == "__main__":
     try:
