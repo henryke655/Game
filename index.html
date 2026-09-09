@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎮 Jogo da Velha Online</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
+</head>
+<body>
+    <!-- Modal de Login -->
+    <div class="modal" id="login-modal">
+        <div class="modal-content">
+            <div class="logo">🎮</div>
+            <h1>Jogo da Velha</h1>
+            <p>Multiplayer Online</p>
+            <input 
+                type="text" 
+                id="username-input" 
+                placeholder="Seu nome de jogador" 
+                maxlength="20" 
+                autocomplete="off"
+                autofocus
+            >
+            <button class="btn btn-primary" id="start-btn">
+                🚀 Entrar no Jogo
+            </button>
+            <div class="features">
+                <span>⚡ Tempo Real</span>
+                <span>🏆 Ranking Global</span>
+                <span>📱 Multiplataforma</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Área do Jogo -->
+    <div class="container" id="game-area" style="display:none;">
+        <header>
+            <h1>🎮 Jogo da Velha</h1>
+            <div class="user-info">
+                <span id="welcome-user">Jogador</span>
+                <button class="btn-icon" id="logout-btn" title="Sair">🚪</button>
+            </div>
+        </header>
+
+        <!-- Stats do Jogador -->
+        <div class="player-stats" id="player-stats">
+            <div class="stat-card">
+                <span class="stat-value" id="my-rank">-</span>
+                <span class="stat-label">Rank</span>
+            </div>
+            <div class="stat-card highlight">
+                <span class="stat-value" id="my-elo">1000</span>
+                <span class="stat-label">ELO</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="my-wins">0</span>
+                <span class="stat-label">Vitórias</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="my-streak">0</span>
+                <span class="stat-label">Sequência</span>
+            </div>
+        </div>
+
+        <!-- Status do Jogo -->
+        <div class="status" id="status">Conectando...</div>
+
+        <!-- Tabuleiro -->
+        <div class="board" id="board">
+            <div class="cell" data-index="0"></div>
+            <div class="cell" data-index="1"></div>
+            <div class="cell" data-index="2"></div>
+            <div class="cell" data-index="3"></div>
+            <div class="cell" data-index="4"></div>
+            <div class="cell" data-index="5"></div>
+            <div class="cell" data-index="6"></div>
+            <div class="cell" data-index="7"></div>
+            <div class="cell" data-index="8"></div>
+        </div>
+
+        <!-- Botões -->
+        <div class="buttons">
+            <button class="btn btn-play" id="join-btn">
+                🎮 Procurar Oponente
+            </button>
+            <button class="btn btn-secondary" id="rematch-btn" style="display:none;">
+                🔄 Revanche
+            </button>
+            <button class="btn btn-secondary" id="leave-btn" style="display:none;">
+                ❌ Sair da Partida
+            </button>
+        </div>
+
+        <!-- Conexão -->
+        <div class="connection-status" id="connection-status">
+            <span class="dot offline"></span>
+            <span>Desconectado</span>
+        </div>
+    </div>
+
+    <!-- Botão Ranking -->
+    <button class="btn-rank" id="rank-toggle" style="display:none;">
+        🏆 Ranking
+    </button>
+
+    <!-- Painel de Ranking -->
+    <div class="ranking-panel" id="ranking-panel">
+        <div class="ranking-header">
+            <h2>🏆 Ranking Global</h2>
+            <button class="btn-close" id="close-ranking">✕</button>
+        </div>
+
+        <div class="ranking-tabs">
+            <button class="tab active" data-sort="elo_rating">⭐ ELO</button>
+            <button class="tab" data-sort="wins">🎯 Vitórias</button>
+            <button class="tab" data-sort="win_rate">📊 Aproveitamento</button>
+            <button class="tab" data-sort="streak">🔥 Sequência</button>
+        </div>
+
+        <div class="ranking-list" id="ranking-list">
+            <p class="empty-state">Nenhum jogador ainda</p>
+        </div>
+
+        <div class="ranking-stats" id="ranking-stats"></div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="game.js"></script>
+</body>
+</html>
